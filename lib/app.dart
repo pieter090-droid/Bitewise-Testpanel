@@ -5,7 +5,6 @@ import 'package:bitewise/core/constants/app_constants.dart';
 import 'package:bitewise/core/preferences/preferences_service.dart';
 import 'package:bitewise/core/router/app_router.dart';
 import 'package:bitewise/core/theme/app_theme.dart';
-import 'package:bitewise/core/theme/app_colors.dart';
 import 'package:bitewise/features/sync/application/sync_coordinator.dart';
 import 'package:bitewise/features/sync/data/sync_service.dart';
 
@@ -40,15 +39,6 @@ class _BitewiseAppState extends ConsumerState<BitewiseApp> {
       debugShowCheckedModeBanner: false,
       theme: AppTheme.light,
       routerConfig: router,
-      builder: (context, child) => ColoredBox(
-        color: AppColors.surface,
-        child: Center(
-          child: ConstrainedBox(
-            constraints: const BoxConstraints(maxWidth: 760),
-            child: child ?? const SizedBox.shrink(),
-          ),
-        ),
-      ),
     );
   }
 }

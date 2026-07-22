@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 
+import 'package:bitewise/core/branding/brand_marks.dart';
 import 'package:bitewise/core/router/app_router.dart';
 import 'package:bitewise/core/theme/app_colors.dart';
 import 'package:bitewise/features/home/presentation/widgets/macro_bar.dart';
@@ -24,7 +25,7 @@ class HomeScreen extends ConsumerWidget {
 
     return Scaffold(
       appBar: AppBar(
-        title: const Text('Dagboek'),
+        title: const BrandWordmark(),
         actions: [
           IconButton(
             icon: const Icon(Icons.qr_code_scanner),
@@ -35,42 +36,6 @@ class HomeScreen extends ConsumerWidget {
       body: ListView(
         padding: const EdgeInsets.fromLTRB(16, 8, 16, 32),
         children: [
-          Card(
-            color: AppColors.navy,
-            child: Padding(
-              padding: const EdgeInsets.all(18),
-              child: Row(
-                children: [
-                  const Expanded(
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Text('Bitewise Testpanel',
-                            style: TextStyle(
-                                color: AppColors.white,
-                                fontSize: 18,
-                                fontWeight: FontWeight.w800)),
-                        SizedBox(height: 4),
-                        Text('Scan of zoek een product en beoordeel de swaps.',
-                            style: TextStyle(color: AppColors.mist)),
-                      ],
-                    ),
-                  ),
-                  FilledButton(
-                    style: FilledButton.styleFrom(
-                      backgroundColor: AppColors.gold,
-                      foregroundColor: AppColors.navy,
-                      minimumSize: const Size(84, 46),
-                      padding: const EdgeInsets.symmetric(horizontal: 18),
-                    ),
-                    onPressed: () => context.go(Routes.scan),
-                    child: const Text('Start'),
-                  ),
-                ],
-              ),
-            ),
-          ),
-          const SizedBox(height: 12),
           _DateNavigator(day: day, ref: ref),
           const SizedBox(height: 12),
           _DayHeaderCard(
