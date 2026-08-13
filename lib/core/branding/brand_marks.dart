@@ -18,9 +18,8 @@ class BrandWordmark extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final parts = mark == BrandMark.bitewise
-        ? ('Bite', 'ise')
-        : ('SnackS', 'ap');
+    final parts =
+        mark == BrandMark.bitewise ? ('Bite', 'ise') : ('SnackS', 'ap');
     final style = TextStyle(
       color: AppColors.navy,
       fontFamily: 'Georgia',
