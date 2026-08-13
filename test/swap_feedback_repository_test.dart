@@ -27,10 +27,10 @@ void main() {
       goal: 'meer_eiwit',
     );
 
-    final export = jsonDecode(await repository.exportJson())
-        as Map<String, dynamic>;
-    final feedback = (export['feedback'] as List).single
-        as Map<String, dynamic>;
+    final export =
+        jsonDecode(await repository.exportJson()) as Map<String, dynamic>;
+    final feedback =
+        (export['feedback'] as List).single as Map<String, dynamic>;
 
     expect(feedback['from_barcode'], 'solero');
     expect(feedback['to_barcode'], 'cottage-cheese');
