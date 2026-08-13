@@ -44,7 +44,11 @@ jobs:
       - run: dart run build_runner build --delete-conflicting-outputs
 
       - name: Verify formatting
-        run: dart format --output=none --set-exit-if-changed lib test
+        # Drift genereert app_database.g.dart platformafhankelijk. Controleer
+        # daarom alle handgeschreven Dart-code, maar niet gegenereerde bestanden.
+        run: >
+          dart format --output=none --set-exit-if-changed
+          $(find lib test -name '*.dart' ! -name '*.g.dart')
 
       - name: Static analysis
         run: flutter analyze --no-fatal-infos
