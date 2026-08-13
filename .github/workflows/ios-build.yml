@@ -1,0 +1,62 @@
+name: iOS build
+
+on:
+  workflow_dispatch:
+
+jobs:
+  build-ios:
+    runs-on: macos-14
+    env:
+      SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+      SUPABASE_ANON_KEY: ${{ secrets.SUPABASE_ANON_KEY }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          cache: true
+
+      - name: Show Flutter version
+        run: flutter --version
+
+      - name: Ensure camera usage description
+        run: |
+          if ! /usr/libexec/PlistBuddy -c "Print :NSCameraUsageDescription" ios/Runner/Info.plist >/dev/null 2>&1; then
+            /usr/libexec/PlistBuddy -c "Add :NSCameraUsageDescription string 'Bitewise gebruikt de camera om productbarcodes te scannen.'" ios/Runner/Info.plist
+          fi
+
+      - name: Install dependencies
+        run: flutter pub get
+
+      - name: Code generation
+        run: dart run build_runner build --delete-conflicting-outputs
+
+      - name: Check Supabase configuration
+        run: |
+          test -n "$SUPABASE_URL" || { echo "Missing GitHub Actions secret: SUPABASE_URL"; exit 1; }
+          test -n "$SUPABASE_ANON_KEY" || { echo "Missing GitHub Actions secret: SUPABASE_ANON_KEY"; exit 1; }
+
+      - name: Build iOS unsigned
+        run: >-
+          flutter build ios --release --no-codesign
+          --dart-define=SUPABASE_URL="$SUPABASE_URL"
+          --dart-define=SUPABASE_ANON_KEY="$SUPABASE_ANON_KEY"
+
+      - name: Package unsigned IPA
+        run: |
+          rm -rf build/ios/iphoneos/Payload
+          mkdir -p build/ios/iphoneos/Payload
+          cp -R build/ios/iphoneos/Runner.app build/ios/iphoneos/Payload/Runner.app
+          cd build/ios/iphoneos
+          zip -qr app-unsigned.ipa Payload
+
+      - name: Upload IPA artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: bitewise-ios-unsigned
+          path: build/ios/iphoneos/app-unsigned.ipa
+          if-no-files-found: error
