@@ -60,6 +60,8 @@ class HomeScreen extends ConsumerWidget {
                     style: FilledButton.styleFrom(
                       backgroundColor: AppColors.gold,
                       foregroundColor: AppColors.navy,
+                      minimumSize: const Size(84, 46),
+                      padding: const EdgeInsets.symmetric(horizontal: 18),
                     ),
                     onPressed: () => context.go(Routes.scan),
                     child: const Text('Start'),
