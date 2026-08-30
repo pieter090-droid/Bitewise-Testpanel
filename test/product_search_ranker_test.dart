@@ -28,6 +28,7 @@ void main() {
         item('1', 'Mayonaise met ei'),
         item('2', 'Scharrel eieren 10 stuks'),
         item('3', 'Eiwitreep chocolade'),
+        readyItem('4', 'Ei-bieslook salade'),
       ]);
       expect(result.first.barcode, '2');
     });

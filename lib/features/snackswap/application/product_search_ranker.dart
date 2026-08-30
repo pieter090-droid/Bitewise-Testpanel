@@ -80,7 +80,9 @@ abstract final class ProductSearchRanker {
         score += 250;
       }
       score += aliases.where((alias) => searchable.contains(alias)).length * 90;
-      score += words.intersection(aliasWords).length * 500;
+      // Een volledig synoniemwoord is sterk bewijs voor productintentie:
+      // "scharreleieren" moet bij "ei" boven "ei-bieslooksalade" komen.
+      score += words.intersection(aliasWords).length * 1000;
 
       // Bij korte zoektermen is een substring te ruisgevoelig: "ei" mag
       // bijvoorbeeld niet ieder product met "eiwit" naar boven halen.
