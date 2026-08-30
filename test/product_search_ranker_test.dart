@@ -11,6 +11,16 @@ SnackProduct item(String barcode, String name, {String? brand, String? tags}) =>
       categoriesTags: tags,
     );
 
+SnackProduct readyItem(String barcode, String name, {String? brand}) =>
+    SnackProduct(
+      barcode: barcode,
+      name: name,
+      brand: brand,
+      classificationStatus: 'classified',
+      isSwapRelevant: true,
+      swapFamily: 'chocolate_confectionery',
+    );
+
 void main() {
   group('ProductSearchRanker', () {
     test('ei zet echte eieren boven producten met ei als ingrediënt', () {
@@ -45,6 +55,23 @@ void main() {
         ProductSearchRanker.rank('kinder bueno', [product, product]),
         hasLength(1),
       );
+    });
+
+    test('swapklare match krijgt bij gelijke tekst een lichte voorkeur', () {
+      final result = ProductSearchRanker.rank('chocolade', [
+        item('1', 'Chocolade reep'),
+        readyItem('2', 'Chocolade reep'),
+      ]);
+
+      expect(result.first.barcode, '2');
+    });
+
+    test('korte substring eiwitreep telt niet als los woord ei', () {
+      final result = ProductSearchRanker.rank('ei', [
+        item('1', 'Eiwitreep chocolade'),
+      ]);
+
+      expect(result, isEmpty);
     });
   });
 }

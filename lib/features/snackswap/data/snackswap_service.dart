@@ -99,18 +99,47 @@ is_less_processed,has_sweeteners,has_palm_oil,ingredient_count
     final q = query.trim();
     if (!_supabase.isAvailable || q.length < 2) return const [];
     try {
-      final responses = await Future.wait(
-        ProductSearchRanker.searchTerms(q).map(
-          (term) => _supabase.client
+      const columns = 'barcode,name,brand,image_url,categories_tags,'
+          'kcal_100g,sugar_100g,protein_100g,fat_100g,carbs_100g,'
+          'classification_status,is_swap_relevant,swap_family';
+      final terms = ProductSearchRanker.searchTerms(q);
+      final normalized = ProductSearchRanker.normalize(q);
+
+      Future<List<dynamic>> safeQuery(String filter, int limit) async {
+        try {
+          final rows = await _supabase.client
               .from(_resolvedProductView)
-              .select('barcode,name,brand,image_url,categories_tags,'
-                  'kcal_100g,sugar_100g,protein_100g,fat_100g,carbs_100g')
-              .or('name.ilike.%$term%,brand.ilike.%$term%,'
-                  'categories_tags.ilike.%$term%')
-              .limit(60),
+              .select(columns)
+              .or(filter)
+              .limit(limit);
+          return rows as List;
+        } catch (_) {
+          return const [];
+        }
+      }
+
+      // Eerst expliciete naam/merk-matches ophalen. De brede zoeklaag erna
+      // zorgt voor categorieën en synoniemen, zonder dat een willekeurige
+      // databasevolgorde de beste matches buiten de eerste 60 duwt.
+      final requests = <Future<List<dynamic>>>[
+        safeQuery(
+          'name.ilike.$normalized,brand.ilike.$normalized',
+          20,
         ),
-      );
-      final products = responses.expand((rows) => (rows as List).map(
+        safeQuery(
+          'name.ilike.$normalized%,brand.ilike.$normalized%',
+          80,
+        ),
+        ...terms.map(
+          (term) => safeQuery(
+            'name.ilike.%$term%,brand.ilike.%$term%,'
+            'categories_tags.ilike.%$term%',
+            term == normalized ? 120 : 50,
+          ),
+        ),
+      ];
+      final responses = await Future.wait(requests);
+      final products = responses.expand((rows) => rows.map(
             (row) => SnackProduct.fromJson(
               (row as Map).cast<String, dynamic>(),
             ),
@@ -157,15 +186,13 @@ is_less_processed,has_sweeteners,has_palm_oil,ingredient_count
   ///     alleen als vangnet, want "zoet" alleen mengt snoep met yoghurt).
   ///  4. [fallbackCategory] (kale OFF-categorie) wanneer het bronproduct nog
   ///     niet AI-verrijkt is.
-  static const _minAcceptableCandidates = 3;
-
   Future<List<SwapCandidate>> getCandidatesForCluster({
     required String excludeBarcode,
     String? swapFamily,
     String? snackType,
     String? categoryCluster,
     String? fallbackCategory,
-    int limit = 40,
+    int limit = 120,
   }) async {
     if (!_supabase.isAvailable) return const [];
     try {
@@ -184,7 +211,9 @@ is_less_processed,has_sweeteners,has_palm_oil,ingredient_count
                 (r as Map).cast<String, dynamic>()))
             .where(_isEligibleCandidate)
             .toList();
-        if (candidates.length >= _minAcceptableCandidates) return candidates;
+        // Een bekende familie is de hardste semantische grens. Ook bij maar
+        // één goede kandidaat nooit verbreden naar een algemene categorie.
+        return candidates;
       }
       if (snackType != null && snackType.isNotEmpty) {
         final rows = await _supabase.client
@@ -201,7 +230,7 @@ is_less_processed,has_sweeteners,has_palm_oil,ingredient_count
                 (r as Map).cast<String, dynamic>()))
             .where(_isEligibleCandidate)
             .toList();
-        if (candidates.length >= _minAcceptableCandidates) return candidates;
+        return candidates;
       }
       if (categoryCluster != null && categoryCluster.isNotEmpty) {
         final rows = await _supabase.client
@@ -264,14 +293,13 @@ is_less_processed,has_sweeteners,has_palm_oil,ingredient_count
 
   /// Kandidaten voor "Andere opties": primair via de expliciete
   /// `related_families`-lijst (bv. chocolate_spreads -> nut_butters); als die
-  /// leeg is (bv. onbekend `swap_family`), valt terug op gelijke
-  /// `product_form` met een andere `swap_family` als losser vangnet.
+  /// leeg is, worden bewust geen cross-familie-opties verzonnen.
   Future<List<SwapCandidate>> getCandidatesForOtherForm({
     required String excludeBarcode,
     required String productForm,
     List<String> relatedFamilies = const [],
     String? excludeSwapFamily,
-    int limit = 40,
+    int limit = 80,
   }) async {
     if (!_supabase.isAvailable) return const [];
     try {
@@ -292,25 +320,7 @@ is_less_processed,has_sweeteners,has_palm_oil,ingredient_count
             .toList();
         if (candidates.isNotEmpty) return candidates;
       }
-      if (productForm.isEmpty) return const [];
-      var query = _supabase.client
-          .from(_resolvedProductView)
-          .select(_resolvedProductColumns)
-          .eq('product_form', productForm)
-          .eq('classification_status', 'classified')
-          .eq('is_swap_relevant', true)
-          .neq('barcode', excludeBarcode);
-      if (excludeSwapFamily != null && excludeSwapFamily.isNotEmpty) {
-        query = query.neq('swap_family', excludeSwapFamily);
-      }
-      final rows = await query
-          .order('data_quality_score', ascending: false)
-          .limit(limit);
-      return (rows as List)
-          .map((r) =>
-              SwapCandidate.fromJoinedJson((r as Map).cast<String, dynamic>()))
-          .where(_isEligibleCandidate)
-          .toList();
+      return const [];
     } catch (_) {
       return const [];
     }

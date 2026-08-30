@@ -6,11 +6,18 @@ import 'package:bitewise/core/config/env.dart';
 /// Beheert de Supabase-verbinding. Wanneer geen env geconfigureerd is,
 /// draait de app lokaal en zijn remote calls uitgeschakeld.
 class SupabaseService {
-  SupabaseService._();
+  SupabaseService._() : _clientOverride = null;
+
+  /// Alleen voor read-only service- en integratietests. Productie gebruikt
+  /// altijd [instance] en initialiseert via [init].
+  SupabaseService.forTesting(SupabaseClient client)
+      : _clientOverride = client,
+        _initialized = true;
 
   static final SupabaseService instance = SupabaseService._();
 
   bool _initialized = false;
+  final SupabaseClient? _clientOverride;
   bool get isAvailable => _initialized;
 
   Future<void> init() async {
@@ -27,7 +34,7 @@ class SupabaseService {
     if (!_initialized) {
       throw StateError('Supabase is niet geconfigureerd (env ontbreekt).');
     }
-    return Supabase.instance.client;
+    return _clientOverride ?? Supabase.instance.client;
   }
 }
 

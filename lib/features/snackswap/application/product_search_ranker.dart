@@ -9,6 +9,20 @@ abstract final class ProductSearchRanker {
     'proteine': ['eiwit', 'protein'],
     'amandel': ['almond'],
     'almond': ['amandel'],
+    'yoghurt': ['yogurt'],
+    'yogurt': ['yoghurt'],
+    'kwark': ['quark', 'fromage blanc'],
+    'ijs': ['ice cream', 'glace'],
+    'frisdrank': ['soft drink', 'soda'],
+    'chips': ['crisps', 'aardappelchips'],
+    'reep': ['bar'],
+    'koek': ['cookie', 'cookies', 'biscuit', 'biscuits'],
+    'kaas': ['cheese'],
+    'kipfilet': ['chicken breast'],
+    'pindakaas': ['peanut butter'],
+    'chocopasta': ['hazelnootpasta', 'chocolate spread'],
+    'appel': ['apple'],
+    'brood': ['bread'],
   };
 
   static List<String> searchTerms(String query) {
@@ -68,7 +82,17 @@ abstract final class ProductSearchRanker {
       score += aliases.where((alias) => searchable.contains(alias)).length * 90;
       score += words.intersection(aliasWords).length * 500;
 
-      if (q.length <= 3 && !words.contains(q) && exactTokens == 0) score -= 250;
+      // Bij korte zoektermen is een substring te ruisgevoelig: "ei" mag
+      // bijvoorbeeld niet ieder product met "eiwit" naar boven halen.
+      final hasShortWordMatch = words.contains(q) ||
+          exactTokens > 0 ||
+          words.intersection(aliasWords).isNotEmpty;
+      if (q.length <= 3 && !hasShortWordMatch) continue;
+
+      // Een gevonden product blijft vindbaar, maar producten waarvoor de
+      // aanbevelingsengine klaar is krijgen binnen vergelijkbare tekstmatches
+      // een lichte voorkeur.
+      if (product.isSwapReady) score += 75;
       if (score > 0) scored.add((product: product, score: score));
     }
 

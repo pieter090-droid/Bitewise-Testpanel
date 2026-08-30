@@ -19,6 +19,12 @@ class SwapScoreCalculator {
     dataQuality: 5,
   );
 
+  /// Onder deze grens is een uitkomst te onzeker om als aanbeveling te tonen.
+  // De samengestelde score heeft een neutrale dagcontext, maar geeft voor
+  // ongewijzigde voedingswaarden bewust 0 verbeterpunten. Daardoor ligt een
+  // inhoudelijk goede, vergelijkbare swap rond 40-70 in plaats van 60-90.
+  static const double minimumRecommendedScore = 40;
+
   SwapScoreResult score({
     required SwapCandidate source,
     required SwapCandidate candidate,
@@ -28,6 +34,12 @@ class SwapScoreCalculator {
     if (!_isEligibleCandidate(source, candidate)) {
       return _excluded(candidate, 'candidate_not_eligible');
     }
+    if (!_isDirectlyCompatible(source, candidate)) {
+      return _excluded(candidate, 'family_or_form_mismatch');
+    }
+    if (!meetsGoalMinimum(source, candidate, goal)) {
+      return _excluded(candidate, 'goal_not_meaningfully_improved');
+    }
     return _calculate(source, candidate, goal, dayContext);
   }
 
@@ -36,13 +48,18 @@ class SwapScoreCalculator {
     required SwapCandidate candidate,
     required SwapGoal goal,
     SwapDayContext dayContext = const SwapDayContext(),
-  }) =>
-      score(
-        source: source,
-        candidate: candidate,
-        goal: goal,
-        dayContext: dayContext,
-      );
+  }) {
+    if (!_isEligibleCandidate(source, candidate)) {
+      return _excluded(candidate, 'candidate_not_eligible');
+    }
+    if (!_isCrossFamilyCompatible(source, candidate)) {
+      return _excluded(candidate, 'incompatible_alternative');
+    }
+    if (!meetsGoalMinimum(source, candidate, goal)) {
+      return _excluded(candidate, 'goal_not_meaningfully_improved');
+    }
+    return _calculate(source, candidate, goal, dayContext);
+  }
 
   List<SwapScoreResult> rankCandidates({
     required SwapCandidate source,
@@ -87,6 +104,9 @@ class SwapScoreCalculator {
       0,
       100,
     );
+    if (score < minimumRecommendedScore) {
+      return _excluded(candidate, 'score_below_minimum');
+    }
 
     final reasons = _reasonCodes(source, candidate, goal);
     final reason = _userReason(goal, reasons);
@@ -115,6 +135,186 @@ class SwapScoreCalculator {
       candidate.features.isSwapRelevant &&
       candidate.features.swapFamily != null &&
       candidate.features.swapFamily!.isNotEmpty;
+
+  static bool _isDirectlyCompatible(
+    SwapCandidate source,
+    SwapCandidate candidate,
+  ) {
+    final sourceFamily = source.features.swapFamily;
+    final candidateFamily = candidate.features.swapFamily;
+    if (sourceFamily == null ||
+        sourceFamily.isEmpty ||
+        candidateFamily != sourceFamily) {
+      return false;
+    }
+    if (_knownBoolMismatch(
+        source.features.isDrink, candidate.features.isDrink)) {
+      return false;
+    }
+    if (_knownStringMismatch(
+        source.features.productForm, candidate.features.productForm)) {
+      return false;
+    }
+    if (_knownStringMismatch(
+        source.features.consumptionMode, candidate.features.consumptionMode)) {
+      return false;
+    }
+    return true;
+  }
+
+  static bool _isCrossFamilyCompatible(
+    SwapCandidate source,
+    SwapCandidate candidate,
+  ) {
+    if (source.features.swapFamily == candidate.features.swapFamily) {
+      return false;
+    }
+    if (_knownBoolMismatch(
+        source.features.isDrink, candidate.features.isDrink)) {
+      return false;
+    }
+    // Een alternatief uit een andere familie moet juist méér bewijs leveren:
+    // onbekende of afwijkende vorm/gebruik is geen betrouwbare swap.
+    final sourceForm = source.features.productForm;
+    final candidateForm = candidate.features.productForm;
+    final sourceMode = source.features.consumptionMode;
+    final candidateMode = candidate.features.consumptionMode;
+    return sourceForm != null &&
+        sourceForm.isNotEmpty &&
+        sourceForm == candidateForm &&
+        sourceMode != null &&
+        sourceMode.isNotEmpty &&
+        sourceMode == candidateMode;
+  }
+
+  static bool _knownStringMismatch(String? left, String? right) =>
+      left != null &&
+      left.isNotEmpty &&
+      right != null &&
+      right.isNotEmpty &&
+      left != right;
+
+  static bool _knownBoolMismatch(bool? left, bool? right) =>
+      left != null && right != null && left != right;
+
+  /// Een score is pas bruikbaar als het gekozen gebruikersdoel aantoonbaar
+  /// en niet slechts marginaal verbetert. Ontbrekende bron- of kandidaatdata
+  /// kan deze poort nooit passeren.
+  static bool meetsGoalMinimum(
+    SwapCandidate source,
+    SwapCandidate candidate,
+    SwapGoal goal,
+  ) =>
+      switch (goal) {
+        SwapGoal.minderKcal =>
+          _relativeReductionAtLeast(source.kcal100, candidate.kcal100, .10),
+        SwapGoal.minderSuiker => _relativeReductionAtLeast(
+              source.sugar100,
+              candidate.sugar100,
+              .10,
+            ) ||
+            _absoluteReductionAtLeast(
+              source.sugar100,
+              candidate.sugar100,
+              2,
+            ),
+        SwapGoal.meerEiwit =>
+          _relativeGainAtLeast(source.protein100, candidate.protein100, .15) &&
+              _absoluteGainAtLeast(
+                source.protein100,
+                candidate.protein100,
+                1,
+              ),
+        SwapGoal.besteOverall =>
+          _overallImprovementCount(source, candidate) >= 2 &&
+              !_hasMajorRegression(source, candidate),
+      };
+
+  static int _overallImprovementCount(
+    SwapCandidate source,
+    SwapCandidate candidate,
+  ) {
+    var count = 0;
+    if (_relativeReductionAtLeast(source.kcal100, candidate.kcal100, .10)) {
+      count++;
+    }
+    if (_relativeReductionAtLeast(source.sugar100, candidate.sugar100, .10) ||
+        _absoluteReductionAtLeast(source.sugar100, candidate.sugar100, 2)) {
+      count++;
+    }
+    if (_relativeGainAtLeast(source.protein100, candidate.protein100, .15) &&
+        _absoluteGainAtLeast(source.protein100, candidate.protein100, 1)) {
+      count++;
+    }
+    if (_relativeGainAtLeast(source.fiber100, candidate.fiber100, .15) &&
+        _absoluteGainAtLeast(source.fiber100, candidate.fiber100, 1)) {
+      count++;
+    }
+    if (_relativeReductionAtLeast(source.salt100, candidate.salt100, .10)) {
+      count++;
+    }
+    if (_relativeReductionAtLeast(
+      source.saturatedFat100,
+      candidate.saturatedFat100,
+      .10,
+    )) {
+      count++;
+    }
+    return count;
+  }
+
+  static bool _hasMajorRegression(
+    SwapCandidate source,
+    SwapCandidate candidate,
+  ) =>
+      _relativeGainAtLeast(source.kcal100, candidate.kcal100, .20) ||
+      (_relativeGainAtLeast(source.sugar100, candidate.sugar100, .20) &&
+          _absoluteGainAtLeast(source.sugar100, candidate.sugar100, 2)) ||
+      (_relativeReductionAtLeast(
+            source.protein100,
+            candidate.protein100,
+            .25,
+          ) &&
+          _absoluteReductionAtLeast(
+            source.protein100,
+            candidate.protein100,
+            1,
+          ));
+
+  static bool _relativeReductionAtLeast(
+    double? source,
+    double? candidate,
+    double threshold,
+  ) =>
+      source != null &&
+      candidate != null &&
+      source > 0 &&
+      candidate < source &&
+      (source - candidate) / source >= threshold;
+
+  static bool _absoluteReductionAtLeast(
+    double? source,
+    double? candidate,
+    double threshold,
+  ) =>
+      source != null && candidate != null && source - candidate >= threshold;
+
+  static bool _relativeGainAtLeast(
+    double? source,
+    double? candidate,
+    double threshold,
+  ) =>
+      source != null &&
+      candidate != null &&
+      candidate > source &&
+      (candidate - source) / math.max(source.abs(), 1) >= threshold;
+
+  static bool _absoluteGainAtLeast(
+    double? source,
+    double? candidate,
+    double threshold,
+  ) =>
+      source != null && candidate != null && candidate - source >= threshold;
 
   static double _goalMatchScore(
     SwapCandidate source,

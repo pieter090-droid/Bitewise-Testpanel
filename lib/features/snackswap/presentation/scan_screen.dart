@@ -168,9 +168,12 @@ class _ScanScreenState extends ConsumerState<ScanScreen> {
             margin: const EdgeInsets.only(bottom: 8),
             child: ListTile(
               title: Text(p.name),
-              subtitle: (p.brand != null && p.brand!.isNotEmpty)
-                  ? Text(p.brand!)
-                  : null,
+              subtitle: Text([
+                if (p.brand != null && p.brand!.isNotEmpty) p.brand!,
+                p.isSwapReady
+                    ? 'Geschikt voor swapcheck'
+                    : 'Nog niet beschikbaar voor swaps',
+              ].join(' • ')),
               trailing: p.kcal100 != null
                   ? Text('${p.kcal100!.round()} kcal',
                       style: const TextStyle(

@@ -93,22 +93,6 @@ bool _relativeImprovement(
   }
 }
 
-/// Voor de "Andere opties"-groep: is de kandidaat op minstens één punt
-/// (kcal/suiker/eiwit) aantoonbaar beter dan het bronproduct? Dit is de enige
-/// rechtvaardiging om een andere `swap_family` (bv. smeerkaas i.p.v.
-/// chocopasta) toch te tonen -- puur "andere vorm" zonder verbetering is
-/// geen zinnige suggestie.
-bool _hasAnyNutritionImprovement(
-    SwapCandidate source, SwapCandidate candidate) {
-  final sSugar = source.sugar100, cSugar = candidate.sugar100;
-  if (sSugar != null && cSugar != null && cSugar < sSugar) return true;
-  final sKcal = source.kcal100, cKcal = candidate.kcal100;
-  if (sKcal != null && cKcal != null && cKcal < sKcal) return true;
-  final sProtein = source.protein100, cProtein = candidate.protein100;
-  if (sProtein != null && cProtein != null && cProtein > sProtein) return true;
-  return false;
-}
-
 /// Groepeert een (eventueel al op categorie gefilterde) kandidatenlijst
 /// volgens een lokale UI-config -- Minder kcal/Meer eiwit/Minder suiker/
 /// Overall, elk relatief t.o.v. [source] (zie
@@ -235,14 +219,14 @@ final ruleBasedSwapProvider = FutureProvider.family<
     SwapRecommendationGroup(
       slug: 'directe_swaps',
       label: 'Directe swaps',
-      results: ranked.take(8).toList(),
+      results: ranked.take(5).toList(),
     ),
   ];
 
   // "Andere opties": bewust cross-familie (bv. chocopasta -> smeerkaas of
   // pindakaas), primair via de expliciete `related_families`-lijst uit
-  // swap_family_mapping (bron van waarheid), met product_form als losser
-  // vangnet. Alleen getoond als er een aantoonbare voedingsverbetering is.
+  // swap_family_mapping (bron van waarheid). Zonder expliciete relatie wordt
+  // geen los product-form-vangnet meer gebruikt.
   var otherOptions = <SwapScoreResult>[];
   final sourceForm = source.features.productForm;
   final sourceFamily = source.features.swapFamily;
@@ -257,22 +241,8 @@ final ruleBasedSwapProvider = FutureProvider.family<
       excludeSwapFamily: sourceFamily,
     );
     otherOptions = otherFormCandidates
-        .where((c) =>
-            c.features.productForm == null ||
-            c.features.productForm == sourceForm)
-        .where((c) =>
-            c.features.consumptionMode == null ||
-            source.features.consumptionMode == null ||
-            c.features.consumptionMode == source.features.consumptionMode)
-        .where((c) => _hasAnyNutritionImprovement(source, c))
         .map((c) => calculator.scoreCrossForm(
             source: source, candidate: c, goal: goal, dayContext: dayContext))
-        // _hasAnyNutritionImprovement gate hierboven kijkt alleen naar
-        // richting (bv. kcal omlaag), niet naar de harde-penalty-regels van
-        // het gekozen doel (bv. eiwit >30% omlaag) -- zonder deze filter
-        // konden kandidaten met score 0 en geen reason-tekst tussen de
-        // echte suggesties staan (bv. "Aardbeien zero" bij Nutella +
-        // Minder kcal: minder kcal, maar eiwit-hard-penalty).
         .where((r) => !r.isExcluded)
         .toList()
       ..sort((a, b) => b.score.compareTo(a.score));
@@ -280,7 +250,7 @@ final ruleBasedSwapProvider = FutureProvider.family<
       groups.add(SwapRecommendationGroup(
         slug: 'andere_opties',
         label: 'Andere opties',
-        results: otherOptions.take(5).toList(),
+        results: otherOptions.take(3).toList(),
       ));
     }
   }

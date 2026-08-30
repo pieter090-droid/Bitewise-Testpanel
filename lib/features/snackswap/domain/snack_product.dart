@@ -16,6 +16,9 @@ class SnackProduct {
     this.fat100,
     this.carbs100,
     this.categoriesTags,
+    this.classificationStatus,
+    this.isSwapRelevant = false,
+    this.swapFamily,
   });
 
   final String barcode;
@@ -30,6 +33,15 @@ class SnackProduct {
   final double? fat100;
   final double? carbs100;
   final String? categoriesTags;
+  final String? classificationStatus;
+  final bool isSwapRelevant;
+  final String? swapFamily;
+
+  bool get isSwapReady =>
+      classificationStatus == 'classified' &&
+      isSwapRelevant &&
+      swapFamily != null &&
+      swapFamily!.isNotEmpty;
 
   factory SnackProduct.fromJson(Map<String, dynamic> json, {String? source}) {
     double? d(Object? v) => v == null ? null : (v as num).toDouble();
@@ -47,6 +59,9 @@ class SnackProduct {
       fat100: d(json['fat_100g']),
       carbs100: d(json['carbs_100g']),
       categoriesTags: json['categories_tags']?.toString(),
+      classificationStatus: json['classification_status'] as String?,
+      isSwapRelevant: json['is_swap_relevant'] == true,
+      swapFamily: json['swap_family'] as String?,
     );
   }
 }

@@ -172,7 +172,7 @@ void main() {
       );
 
       expect(result.isExcluded, isTrue);
-      expect(result.excludedReason, 'insufficient_similarity');
+      expect(result.excludedReason, 'family_or_form_mismatch');
     });
 
     test('Magnum naar rauwe vis mag niet', () {
@@ -194,7 +194,7 @@ void main() {
       );
 
       expect(result.isExcluded, isTrue);
-      expect(result.excludedReason, 'insufficient_similarity');
+      expect(result.excludedReason, 'family_or_form_mismatch');
     });
 
     test('zalm wrap naar fish_seafood/raw fish mag niet als snackadvies', () {
@@ -206,6 +206,51 @@ void main() {
 
       expect(result.isExcluded, isTrue);
       expect(result.excludedReason, 'candidate_not_eligible');
+    });
+
+    test('zelfde familie zonder betekenisvolle doelwinst wordt niet getoond',
+        () {
+      final result = calculator.score(
+        source: spread('source', kcal: 500),
+        candidate: spread('candidate', kcal: 480),
+        goal: SwapGoal.minderKcal,
+      );
+
+      expect(result.isExcluded, isTrue);
+      expect(result.excludedReason, 'goal_not_meaningfully_improved');
+    });
+
+    test('meer eiwit vereist zowel 15 procent als minimaal 1 gram winst', () {
+      final result = calculator.score(
+        source: yoghurt('source', protein: 7, kcal: 120, sugar: 8),
+        candidate: yoghurt('candidate', protein: 7.9, kcal: 110, sugar: 7),
+        goal: SwapGoal.meerEiwit,
+      );
+
+      expect(result.isExcluded, isTrue);
+      expect(result.excludedReason, 'goal_not_meaningfully_improved');
+    });
+
+    test('overall vereist twee verbeteringen zonder grote regressie', () {
+      final result = calculator.score(
+        source: spread('source', kcal: 500, sugar: 40, protein: 8),
+        candidate: spread('candidate', kcal: 400, sugar: 30, protein: 4),
+        goal: SwapGoal.besteOverall,
+      );
+
+      expect(result.isExcluded, isTrue);
+      expect(result.excludedReason, 'goal_not_meaningfully_improved');
+    });
+
+    test('cross-familie vereist dezelfde bekende vorm en gebruikswijze', () {
+      final result = calculator.scoreCrossForm(
+        source: iceCream('solero'),
+        candidate: cottageCheese('cottage-cheese'),
+        goal: SwapGoal.meerEiwit,
+      );
+
+      expect(result.isExcluded, isTrue);
+      expect(result.excludedReason, 'incompatible_alternative');
     });
   });
 
