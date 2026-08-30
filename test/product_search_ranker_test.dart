@@ -74,5 +74,26 @@ void main() {
 
       expect(result, isEmpty);
     });
+
+    test('één typefout in een langer productwoord blijft vindbaar', () {
+      final result = ProductSearchRanker.rank('choclade', [
+        item('1', 'Chocolade reep puur'),
+        item('2', 'Vanillevla'),
+      ]);
+
+      expect(result.single.barcode, '1');
+      expect(ProductSearchRanker.searchTerms('choclade'), contains('choc'));
+    });
+
+    test('verwisselde letters blijven vindbaar zonder korte fuzzy ruis', () {
+      final result = ProductSearchRanker.rank('yohgurt', [
+        item('1', 'Yoghurt naturel'),
+        item('2', 'Yoghurtdressing'),
+      ]);
+
+      expect(result.first.barcode, '1');
+      expect(ProductSearchRanker.searchTerms('yohgurt'), contains('yoghurt'));
+      expect(ProductSearchRanker.rank('ei', [item('3', 'Eiwitreep')]), isEmpty);
+    });
   });
 }

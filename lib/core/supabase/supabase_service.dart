@@ -14,6 +14,9 @@ class SupabaseService {
       : _clientOverride = client,
         _initialized = true;
 
+  SupabaseService.withClientForTesting(SupabaseClient client)
+      : this.forTesting(client);
+
   static final SupabaseService instance = SupabaseService._();
 
   bool _initialized = false;

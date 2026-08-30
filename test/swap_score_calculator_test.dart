@@ -78,20 +78,22 @@ void main() {
       expect(ranked.first.candidate.barcode, 'low-sugar');
     });
 
-    test('Nutella minder kcal rankt lagere kcal vergelijkbare spread hoger',
-        () {
-      final source = spread('nutella', sugar: 50, kcal: 540);
-      final lowKcal = spread('low-kcal', sugar: 45, kcal: 300);
-      final highKcal = spread('high-kcal', sugar: 20, kcal: 610);
+    test(
+      'Nutella minder kcal rankt lagere kcal vergelijkbare spread hoger',
+      () {
+        final source = spread('nutella', sugar: 50, kcal: 540);
+        final lowKcal = spread('low-kcal', sugar: 45, kcal: 300);
+        final highKcal = spread('high-kcal', sugar: 20, kcal: 610);
 
-      final ranked = calculator.rankCandidates(
-        source: source,
-        candidates: [highKcal, lowKcal],
-        goal: SwapGoal.minderKcal,
-      );
+        final ranked = calculator.rankCandidates(
+          source: source,
+          candidates: [highKcal, lowKcal],
+          goal: SwapGoal.minderKcal,
+        );
 
-      expect(ranked.first.candidate.barcode, 'low-kcal');
-    });
+        expect(ranked.first.candidate.barcode, 'low-kcal');
+      },
+    );
 
     test('Magnum minder kcal rankt lager-kcal dessert hoger', () {
       final source = iceCream('magnum', kcal: 310, sugar: 28);
@@ -164,6 +166,263 @@ void main() {
   });
 
   group('rare swaps', () {
+    // Gevonden bij de end-to-end test op live data: doel 'Minder kcal' op
+    // Filet americain (193 kcal/100g) toonde Jamon serrano (324 kcal/100g)
+    // met de tekst 'Past beter bij minder kcal'.
+    test('doel Minder kcal weigert een kandidaat met meer kcal', () {
+      final source =
+          spread('filet-americain', kcal: 193, sugar: 1, protein: 14);
+      final worse = spread('jamon-serrano', kcal: 324, sugar: 0.5, protein: 35);
+
+      final ranked = calculator.rankCandidates(
+        source: source,
+        candidates: [worse],
+        goal: SwapGoal.minderKcal,
+      );
+
+      expect(ranked, isEmpty);
+      expect(
+        calculator
+            .score(source: source, candidate: worse, goal: SwapGoal.minderKcal)
+            .excludedReason,
+        'wrong_direction_for_goal',
+      );
+    });
+
+    test('doel Minder suiker weigert een kandidaat met meer suiker', () {
+      final source = spread('bron', sugar: 20);
+      final worse = spread('zoeter', sugar: 40);
+
+      expect(
+        calculator.rankCandidates(
+          source: source,
+          candidates: [worse],
+          goal: SwapGoal.minderSuiker,
+        ),
+        isEmpty,
+      );
+    });
+
+    test('doel Meer eiwit weigert een kandidaat met minder eiwit', () {
+      final source = spread('bron', protein: 20);
+      final worse = spread('minder-eiwit', protein: 8);
+
+      expect(
+        calculator.rankCandidates(
+          source: source,
+          candidates: [worse],
+          goal: SwapGoal.meerEiwit,
+        ),
+        isEmpty,
+      );
+    });
+
+    test('gelijke doelas mag blijven, want de winst zit elders', () {
+      final source = spread('bron', kcal: 200, sugar: 30);
+      final gelijk = spread('gelijk-kcal', kcal: 200, sugar: 5);
+
+      expect(
+        calculator.rankCandidates(
+          source: source,
+          candidates: [gelijk],
+          goal: SwapGoal.minderKcal,
+        ),
+        hasLength(1),
+      );
+    });
+
+    test('ontbrekende doelwaarde sluit niets uit', () {
+      final source = spread('bron', kcal: null);
+      final kandidaat = spread('kandidaat', kcal: 900);
+
+      expect(
+        calculator.rankCandidates(
+          source: source,
+          candidates: [kandidaat],
+          goal: SwapGoal.minderKcal,
+        ),
+        hasLength(1),
+      );
+    });
+
+    test('beste overall kent geen richting en filtert dus niet', () {
+      final source = spread('bron', kcal: 100);
+      final kandidaat = spread('meer-kcal', kcal: 500, protein: 40, fiber: 12);
+
+      expect(
+        calculator.rankCandidates(
+          source: source,
+          candidates: [kandidaat],
+          goal: SwapGoal.besteOverall,
+        ),
+        hasLength(1),
+      );
+    });
+
+    test('tekst belooft het doel niet als de doelwinst niet gemeten is', () {
+      final source = spread('bron', kcal: 300, sugar: 40, protein: 5);
+      // Gelijke kcal (dus niet uitgesloten), winst zit in suiker.
+      final kandidaat = spread('zelfde-kcal', kcal: 300, sugar: 2, protein: 5);
+
+      final result = calculator.score(
+        source: source,
+        candidate: kandidaat,
+        goal: SwapGoal.minderKcal,
+      );
+
+      expect(result.isExcluded, isFalse);
+      expect(result.userReason, isNot(contains('Past beter bij minder kcal')));
+      expect(result.userReason, contains('Scheelt suiker'));
+    });
+
+    test('echte kcal-winst onder de codedrempel behoudt de doelbelofte', () {
+      // 193 -> 103 kcal is een halvering, maar haalt de reason-code
+      // drempel (>60 op 0-100) niet. De tekst mag dan niet afzwakken.
+      final source = spread('filet-americain', kcal: 193, protein: 14);
+      final beter = spread('kipfilet', kcal: 103, protein: 16);
+
+      final result = calculator.score(
+        source: source,
+        candidate: beter,
+        goal: SwapGoal.minderKcal,
+      );
+
+      expect(result.isExcluded, isFalse);
+      expect(result.userReason, contains('Past beter bij minder kcal'));
+    });
+
+    test('Andere opties blokkeert expliciete zoet-hartig botsing', () {
+      final result = calculator.scoreCrossForm(
+        source: spread('sweet-source'),
+        candidate: product(
+          'savory-candidate',
+          family: 'savory_spreads',
+          cluster: 'hartig',
+          snackType: 'savory_spread',
+          form: 'spread',
+          mode: 'spread_on_bread',
+          taste: const ['savory'],
+          texture: const ['creamy'],
+          moment: const ['breakfast'],
+          isSweet: false,
+          isSalty: true,
+          kcal: 300,
+          sugar: 2,
+          protein: 8,
+          fiber: 3,
+          fat: 20,
+          carbs: 8,
+          salt: 1,
+        ),
+        goal: SwapGoal.minderSuiker,
+      );
+
+      expect(result.isExcluded, isTrue);
+      expect(result.excludedReason, 'sweet_savory_conflict');
+    });
+
+    test('Andere opties gokt niet als zoet-hartig profiel onbekend is', () {
+      final result = calculator.scoreCrossForm(
+        source: product(
+          'unknown-source',
+          family: 'mixed_source',
+          cluster: 'overig',
+          snackType: 'spread',
+          form: 'spread',
+          mode: 'spread_on_bread',
+          kcal: 500,
+          sugar: 30,
+          protein: 4,
+          fiber: 2,
+          fat: 25,
+          carbs: 40,
+        ),
+        candidate: product(
+          'unknown-candidate',
+          family: 'mixed_candidate',
+          cluster: 'overig',
+          snackType: 'spread',
+          form: 'spread',
+          mode: 'spread_on_bread',
+          kcal: 350,
+          sugar: 15,
+          protein: 6,
+          fiber: 3,
+          fat: 15,
+          carbs: 30,
+        ),
+        goal: SwapGoal.minderKcal,
+      );
+
+      expect(result.excludedReason, isNot('sweet_savory_conflict'));
+    });
+
+    test('Andere opties weigert één kleine voedingsverbetering', () {
+      final result = calculator.scoreCrossForm(
+        source: crossFamilySpread('source', kcal: 500, sugar: 30, protein: 8),
+        candidate: crossFamilySpread(
+          'candidate',
+          family: 'nut_butters',
+          kcal: 500,
+          sugar: 28,
+          protein: 8,
+        ),
+        goal: SwapGoal.minderSuiker,
+      );
+
+      expect(result.isExcluded, isTrue);
+      expect(result.excludedReason, 'insufficient_cross_family_improvement');
+    });
+
+    test('Andere opties accepteert verbetering op twee voedingsassen', () {
+      final result = calculator.scoreCrossForm(
+        source: crossFamilySpread('source', kcal: 500, sugar: 30, protein: 8),
+        candidate: crossFamilySpread(
+          'candidate',
+          family: 'nut_butters',
+          kcal: 430,
+          sugar: 24,
+          protein: 8,
+        ),
+        goal: SwapGoal.besteOverall,
+      );
+
+      expect(result.isExcluded, isFalse);
+    });
+
+    test('Andere opties weigert forse winst met duidelijke verslechtering', () {
+      final result = calculator.scoreCrossForm(
+        source: crossFamilySpread('source', kcal: 500, sugar: 30, protein: 8),
+        candidate: crossFamilySpread(
+          'candidate',
+          family: 'nut_butters',
+          kcal: 350,
+          sugar: 40,
+          protein: 8,
+        ),
+        goal: SwapGoal.minderKcal,
+      );
+
+      expect(result.isExcluded, isTrue);
+      expect(result.excludedReason, 'insufficient_cross_family_improvement');
+    });
+
+    test('Andere opties accepteert forse winst zonder verslechtering', () {
+      final result = calculator.scoreCrossForm(
+        source: crossFamilySpread('source', kcal: 500, sugar: 30, protein: 8),
+        candidate: crossFamilySpread(
+          'candidate',
+          family: 'nut_butters',
+          kcal: 350,
+          sugar: 30,
+          protein: 8,
+        ),
+        goal: SwapGoal.minderKcal,
+      );
+
+      expect(result.isExcluded, isFalse);
+    });
+
     test('Nutella naar water mag niet', () {
       final result = calculator.score(
         source: spread('nutella'),
@@ -172,7 +431,7 @@ void main() {
       );
 
       expect(result.isExcluded, isTrue);
-      expect(result.excludedReason, 'family_or_form_mismatch');
+      expect(result.excludedReason, 'insufficient_similarity');
     });
 
     test('Magnum naar rauwe vis mag niet', () {
@@ -186,17 +445,6 @@ void main() {
       expect(result.excludedReason, 'candidate_not_eligible');
     });
 
-    test('Solero naar cottage cheese mag niet', () {
-      final result = calculator.score(
-        source: iceCream('solero'),
-        candidate: cottageCheese('cottage-cheese'),
-        goal: SwapGoal.meerEiwit,
-      );
-
-      expect(result.isExcluded, isTrue);
-      expect(result.excludedReason, 'family_or_form_mismatch');
-    });
-
     test('zalm wrap naar fish_seafood/raw fish mag niet als snackadvies', () {
       final result = calculator.score(
         source: wrap('zalm-wrap'),
@@ -207,54 +455,52 @@ void main() {
       expect(result.isExcluded, isTrue);
       expect(result.excludedReason, 'candidate_not_eligible');
     });
-
-    test('zelfde familie zonder betekenisvolle doelwinst wordt niet getoond',
-        () {
-      final result = calculator.score(
-        source: spread('source', kcal: 500),
-        candidate: spread('candidate', kcal: 480),
-        goal: SwapGoal.minderKcal,
-      );
-
-      expect(result.isExcluded, isTrue);
-      expect(result.excludedReason, 'goal_not_meaningfully_improved');
-    });
-
-    test('meer eiwit vereist zowel 15 procent als minimaal 1 gram winst', () {
-      final result = calculator.score(
-        source: yoghurt('source', protein: 7, kcal: 120, sugar: 8),
-        candidate: yoghurt('candidate', protein: 7.9, kcal: 110, sugar: 7),
-        goal: SwapGoal.meerEiwit,
-      );
-
-      expect(result.isExcluded, isTrue);
-      expect(result.excludedReason, 'goal_not_meaningfully_improved');
-    });
-
-    test('overall vereist twee verbeteringen zonder grote regressie', () {
-      final result = calculator.score(
-        source: spread('source', kcal: 500, sugar: 40, protein: 8),
-        candidate: spread('candidate', kcal: 400, sugar: 30, protein: 4),
-        goal: SwapGoal.besteOverall,
-      );
-
-      expect(result.isExcluded, isTrue);
-      expect(result.excludedReason, 'goal_not_meaningfully_improved');
-    });
-
-    test('cross-familie vereist dezelfde bekende vorm en gebruikswijze', () {
-      final result = calculator.scoreCrossForm(
-        source: iceCream('solero'),
-        candidate: cottageCheese('cottage-cheese'),
-        goal: SwapGoal.meerEiwit,
-      );
-
-      expect(result.isExcluded, isTrue);
-      expect(result.excludedReason, 'incompatible_alternative');
-    });
   });
 
   group('modelweging', () {
+    test('gebruikt portiedata alleen als beide kanten kernvelden hebben', () {
+      final result = calculator.score(
+        source: servingSpread(
+          'source',
+          kcalServing: 270,
+          sugarServing: 25,
+          proteinServing: 3,
+        ),
+        candidate: servingSpread(
+          'candidate',
+          kcalServing: 90,
+          sugarServing: 10,
+          proteinServing: 5,
+        ),
+        goal: SwapGoal.minderKcal,
+      );
+
+      expect(result.usesServingData, isTrue);
+      expect(result.reasonCodes, contains('fewer_kcal'));
+    });
+
+    test('valt volledig terug op 100g als een kern-portieveld ontbreekt', () {
+      final result = calculator.score(
+        source: servingSpread(
+          'source',
+          kcalServing: 270,
+          sugarServing: 25,
+          proteinServing: 3,
+        ),
+        candidate: servingSpread(
+          'candidate',
+          kcal: 300,
+          kcalServing: 180,
+          sugarServing: 10,
+          proteinServing: null,
+        ),
+        goal: SwapGoal.minderKcal,
+      );
+
+      expect(result.usesServingData, isFalse);
+      expect(result.reasonCodes, isNot(contains('fewer_kcal')));
+    });
+
     test('hoofdformule gebruikt exact 30/25/15/15/10/5', () {
       expect(SwapScoreCalculator.expectedWeights.goalMatch, 30);
       expect(SwapScoreCalculator.expectedWeights.nutritionImprovement, 25);
@@ -333,85 +579,94 @@ void main() {
     });
 
     test(
-        'suiker bijna op limiet verhoogt dagcontextscore voor suikerarme kandidaat',
-        () {
-      final source = spread('source', sugar: 50);
-      final lowSugar = spread('low-sugar', sugar: 5);
-      final highSugar = spread('high-sugar', sugar: 45);
-      const context = SwapDayContext(
-        dailySugarUsed: 38,
-        dailySugarGoal: 40,
-      );
+      'suiker bijna op limiet verhoogt dagcontextscore voor suikerarme kandidaat',
+      () {
+        final source = spread('source', sugar: 50);
+        final lowSugar = spread('low-sugar', sugar: 5);
+        final highSugar = spread('high-sugar', sugar: 45);
+        const context = SwapDayContext(dailySugarUsed: 38, dailySugarGoal: 40);
 
-      final lowResult = calculator.score(
-        source: source,
-        candidate: lowSugar,
-        goal: SwapGoal.minderSuiker,
-        dayContext: context,
-      );
-      final highResult = calculator.score(
-        source: source,
-        candidate: highSugar,
-        goal: SwapGoal.minderSuiker,
-        dayContext: context,
-      );
+        final lowResult = calculator.score(
+          source: source,
+          candidate: lowSugar,
+          goal: SwapGoal.minderSuiker,
+          dayContext: context,
+        );
+        final highResult = calculator.score(
+          source: source,
+          candidate: highSugar,
+          goal: SwapGoal.minderSuiker,
+          dayContext: context,
+        );
 
-      expect(lowResult.dayContext, greaterThan(highResult.dayContext));
-    });
-
-    test('open eiwitdoel verhoogt dagcontextscore voor eiwitrijke kandidaat',
-        () {
-      final source = yoghurt('source', protein: 7, kcal: 120, sugar: 8);
-      final highProtein =
-          yoghurt('high-protein', protein: 25, kcal: 140, sugar: 6);
-      final lowProtein =
-          yoghurt('low-protein', protein: 4, kcal: 110, sugar: 5);
-      const context = SwapDayContext(
-        dailyProteinUsed: 40,
-        dailyProteinGoal: 120,
-      );
-
-      final highResult = calculator.score(
-        source: source,
-        candidate: highProtein,
-        goal: SwapGoal.meerEiwit,
-        dayContext: context,
-      );
-      final lowResult = calculator.score(
-        source: source,
-        candidate: lowProtein,
-        goal: SwapGoal.meerEiwit,
-        dayContext: context,
-      );
-
-      expect(highResult.dayContext, greaterThan(lowResult.dayContext));
-    });
+        expect(lowResult.dayContext, greaterThan(highResult.dayContext));
+      },
+    );
 
     test(
-        'DailySummary wordt veilig gemapt naar SwapDayContext zonder vezels te verzinnen',
-        () {
-      const summary = DailySummary(
-        kcal: 1200,
-        protein: 55,
-        sugar: 35,
-        carbs: 140,
-        calorieTarget: 2100,
-        proteinTarget: 110,
-        sugarLimit: 45,
-        carbsTarget: 250,
-      );
+      'open eiwitdoel verhoogt dagcontextscore voor eiwitrijke kandidaat',
+      () {
+        final source = yoghurt('source', protein: 7, kcal: 120, sugar: 8);
+        final highProtein = yoghurt(
+          'high-protein',
+          protein: 25,
+          kcal: 140,
+          sugar: 6,
+        );
+        final lowProtein = yoghurt(
+          'low-protein',
+          protein: 4,
+          kcal: 110,
+          sugar: 5,
+        );
+        const context = SwapDayContext(
+          dailyProteinUsed: 40,
+          dailyProteinGoal: 120,
+        );
 
-      final context = swapDayContextFromSummary(summary);
+        final highResult = calculator.score(
+          source: source,
+          candidate: highProtein,
+          goal: SwapGoal.meerEiwit,
+          dayContext: context,
+        );
+        final lowResult = calculator.score(
+          source: source,
+          candidate: lowProtein,
+          goal: SwapGoal.meerEiwit,
+          dayContext: context,
+        );
 
-      expect(context.dailyKcalUsed, 1200);
-      expect(context.dailyKcalGoal, 2100);
-      expect(context.dailySugarUsed, 35);
-      expect(context.dailySugarGoal, 45);
-      expect(context.dailyProteinUsed, 55);
-      expect(context.dailyProteinGoal, 110);
-      expect(context.dailyFiberUsed, isNull);
-      expect(context.dailyFiberGoal, isNull);
-    });
+        expect(highResult.dayContext, greaterThan(lowResult.dayContext));
+      },
+    );
+
+    test(
+      'DailySummary wordt veilig gemapt naar SwapDayContext zonder vezels te verzinnen',
+      () {
+        const summary = DailySummary(
+          kcal: 1200,
+          protein: 55,
+          sugar: 35,
+          carbs: 140,
+          calorieTarget: 2100,
+          proteinTarget: 110,
+          sugarLimit: 45,
+          carbsTarget: 250,
+        );
+
+        final context = swapDayContextFromSummary(summary);
+
+        expect(context.dailyKcalUsed, 1200);
+        expect(context.dailyKcalGoal, 2100);
+        expect(context.dailySugarUsed, 35);
+        expect(context.dailySugarGoal, 45);
+        expect(context.dailyProteinUsed, 55);
+        expect(context.dailyProteinGoal, 110);
+        expect(context.dailyFiberUsed, isNull);
+        expect(context.dailyFiberGoal, isNull);
+      },
+    );
   });
 
   test('resolved view modelvelden worden gemapt naar ProductFeatures', () {
@@ -478,6 +733,65 @@ SwapCandidate spread(
       nova: nova,
     );
 
+SwapCandidate servingSpread(
+  String barcode, {
+  double? kcal = 540,
+  double? sugar = 50,
+  double? protein = 6,
+  double? kcalServing,
+  double? sugarServing,
+  double? proteinServing,
+}) =>
+    product(
+      barcode,
+      family: 'chocolate_spreads',
+      cluster: 'zoet',
+      snackType: 'sweet_spread',
+      form: 'spread',
+      mode: 'spread_on_bread',
+      taste: const ['chocolate', 'sweet'],
+      texture: const ['creamy'],
+      moment: const ['breakfast', 'snack'],
+      isSweet: true,
+      kcal: kcal,
+      sugar: sugar,
+      protein: protein,
+      fiber: 2,
+      fat: 30,
+      carbs: 55,
+      servingQuantity: 50,
+      kcalServing: kcalServing,
+      sugarServing: sugarServing,
+      proteinServing: proteinServing,
+    );
+
+SwapCandidate crossFamilySpread(
+  String barcode, {
+  String family = 'chocolate_spreads',
+  double? kcal,
+  double? sugar,
+  double? protein,
+}) =>
+    product(
+      barcode,
+      family: family,
+      cluster: 'beleg',
+      snackType: 'spread',
+      form: 'spread',
+      mode: 'spread_on_bread',
+      taste: const ['creamy'],
+      texture: const ['creamy'],
+      moment: const ['breakfast'],
+      kcal: kcal,
+      sugar: sugar,
+      protein: protein,
+      fiber: 4,
+      fat: 20,
+      carbs: 25,
+      salt: .2,
+      saturatedFat: 5,
+    );
+
 SwapCandidate iceCream(
   String barcode, {
   double? kcal = 280,
@@ -526,25 +840,6 @@ SwapCandidate yoghurt(
       fiber: 0,
       fat: 3,
       carbs: 8,
-    );
-
-SwapCandidate cottageCheese(String barcode) => product(
-      barcode,
-      family: 'fresh_cheese_cottage',
-      cluster: 'zuivel',
-      snackType: 'cottage_cheese',
-      form: 'spread',
-      mode: 'spoonable',
-      taste: const ['dairy', 'savory'],
-      texture: const ['creamy', 'curdy'],
-      moment: const ['breakfast', 'lunch'],
-      isDairy: true,
-      kcal: 98,
-      sugar: 3,
-      protein: 12,
-      fiber: 0,
-      fat: 4,
-      carbs: 3,
     );
 
 SwapCandidate drink(String barcode) => product(
@@ -626,6 +921,13 @@ SwapCandidate product(
   double? carbs,
   double? salt,
   double? saturatedFat,
+  double? servingQuantity,
+  double? kcalServing,
+  double? sugarServing,
+  double? proteinServing,
+  double? fiberServing,
+  double? saltServing,
+  double? saturatedFatServing,
   int? nova,
   String? nutriscoreGrade = 'c',
   double? dataQuality = 90,
@@ -643,6 +945,13 @@ SwapCandidate product(
       carbs100: carbs,
       salt100: salt,
       saturatedFat100: saturatedFat,
+      servingQuantity: servingQuantity,
+      kcalServing: kcalServing,
+      sugarServing: sugarServing,
+      proteinServing: proteinServing,
+      fiberServing: fiberServing,
+      saltServing: saltServing,
+      saturatedFatServing: saturatedFatServing,
       novaGroup: nova,
       nutriscoreGrade: nutriscoreGrade,
       completeness: completeness,

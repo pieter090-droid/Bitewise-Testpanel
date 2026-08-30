@@ -195,6 +195,13 @@ final ruleBasedSwapProvider = FutureProvider.family<
     snackType: source.features.snackType,
     categoryCluster: source.features.categoryCluster,
     fallbackCategory: source.category,
+    goal: request.goal,
+    goalSourceValue: switch (request.goal) {
+      SwapGoal.minderKcal => source.kcal100,
+      SwapGoal.minderSuiker => source.sugar100,
+      SwapGoal.meerEiwit => source.protein100,
+      SwapGoal.besteOverall => null,
+    },
   );
   if (candidates.isEmpty) return const RuleBasedSwapNotFound();
 

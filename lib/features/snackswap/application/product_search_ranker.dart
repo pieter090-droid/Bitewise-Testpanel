@@ -32,8 +32,14 @@ abstract final class ProductSearchRanker {
     for (final token in normalized.split(' ')) {
       if (token.length >= 2) terms.add(token);
       terms.addAll(_aliases[token] ?? const []);
+      // Een korte prefix maakt typefouten terugvindbaar in Supabase; de
+      // lokale rangschikker beslist daarna met edit-distance of het echt past.
+      if (token.length >= 5) {
+        terms.add(token.substring(0, 4));
+        terms.addAll(_adjacentTranspositions(token));
+      }
     }
-    return terms.take(8).toList(growable: false);
+    return terms.take(12).toList(growable: false);
   }
 
   static List<SnackProduct> rank(
@@ -75,6 +81,15 @@ abstract final class ProductSearchRanker {
 
       final exactTokens = queryTokens.where(words.contains).length;
       score += exactTokens * 160;
+      final fuzzyTokens = queryTokens
+          .where((token) => !words.contains(token))
+          .where((token) => words.any((word) => _isNearToken(token, word)))
+          .length;
+      score += fuzzyTokens * 240;
+      if (queryTokens.isNotEmpty &&
+          exactTokens + fuzzyTokens == queryTokens.length) {
+        score += 220;
+      }
       if (queryTokens.isNotEmpty &&
           queryTokens.every((token) => searchable.contains(token))) {
         score += 250;
@@ -82,7 +97,7 @@ abstract final class ProductSearchRanker {
       score += aliases.where((alias) => searchable.contains(alias)).length * 90;
       // Een volledig synoniemwoord is sterk bewijs voor productintentie:
       // "scharreleieren" moet bij "ei" boven "ei-bieslooksalade" komen.
-      score += words.intersection(aliasWords).length * 1000;
+      score += words.intersection(aliasWords).length * 1100;
 
       // Bij korte zoektermen is een substring te ruisgevoelig: "ei" mag
       // bijvoorbeeld niet ieder product met "eiwit" naar boven halen.
@@ -119,4 +134,58 @@ abstract final class ProductSearchRanker {
       .replaceAll(RegExp(r'[^a-z0-9]+'), ' ')
       .trim()
       .replaceAll(RegExp(r'\s+'), ' ');
+
+  static bool _isNearToken(String query, String candidate) {
+    if (query.length < 4 || candidate.length < 4) return false;
+    final maxDistance = query.length >= 8 ? 2 : 1;
+    if ((query.length - candidate.length).abs() > maxDistance) return false;
+    return _editDistance(query, candidate, maxDistance) <= maxDistance;
+  }
+
+  /// Levert een klein, begrensd aantal veelvoorkomende typefoutvarianten.
+  /// Daardoor kan de server kandidaten teruggeven wanneer de fout al in de
+  /// eerste letters zit; de fuzzy rangschikker controleert daarna de match.
+  static Iterable<String> _adjacentTranspositions(String token) sync* {
+    for (var index = 0; index < token.length - 1; index++) {
+      if (token[index] == token[index + 1]) continue;
+      yield '${token.substring(0, index)}'
+          '${token[index + 1]}${token[index]}'
+          '${token.substring(index + 2)}';
+    }
+  }
+
+  /// Begrensde Damerau-Levenshtein: ondersteunt ook twee verwisselde letters
+  /// (zoals `yohgurt`) zonder de hele catalogus fuzzy te maken.
+  static int _editDistance(String left, String right, int cutoff) {
+    final previousPrevious = List<int>.filled(right.length + 1, 0);
+    var previous = List<int>.generate(right.length + 1, (index) => index);
+    for (var i = 1; i <= left.length; i++) {
+      final current = List<int>.filled(right.length + 1, 0)..[0] = i;
+      var rowMinimum = current[0];
+      for (var j = 1; j <= right.length; j++) {
+        final substitutionCost =
+            left.codeUnitAt(i - 1) == right.codeUnitAt(j - 1) ? 0 : 1;
+        var value = [
+          current[j - 1] + 1,
+          previous[j] + 1,
+          previous[j - 1] + substitutionCost,
+        ].reduce((a, b) => a < b ? a : b);
+        if (i > 1 &&
+            j > 1 &&
+            left.codeUnitAt(i - 1) == right.codeUnitAt(j - 2) &&
+            left.codeUnitAt(i - 2) == right.codeUnitAt(j - 1)) {
+          final transposed = previousPrevious[j - 2] + 1;
+          if (transposed < value) value = transposed;
+        }
+        current[j] = value;
+        if (value < rowMinimum) rowMinimum = value;
+      }
+      if (rowMinimum > cutoff) return cutoff + 1;
+      for (var j = 0; j <= right.length; j++) {
+        previousPrevious[j] = previous[j];
+      }
+      previous = current;
+    }
+    return previous[right.length];
+  }
 }

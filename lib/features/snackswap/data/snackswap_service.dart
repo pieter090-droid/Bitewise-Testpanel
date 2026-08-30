@@ -5,6 +5,7 @@ import 'package:bitewise/core/supabase/supabase_service.dart';
 import 'package:bitewise/features/snackswap/application/product_search_ranker.dart';
 import 'package:bitewise/features/snackswap/domain/product_features.dart';
 import 'package:bitewise/features/snackswap/domain/snack_product.dart';
+import 'package:bitewise/features/snackswap/domain/swap_score_result.dart';
 
 // --- Resultaattypes met duidelijke, aparte statussen ---
 
@@ -186,12 +187,56 @@ is_less_processed,has_sweeteners,has_palm_oil,ingredient_count
   ///     alleen als vangnet, want "zoet" alleen mengt snoep met yoghurt).
   ///  4. [fallbackCategory] (kale OFF-categorie) wanneer het bronproduct nog
   ///     niet AI-verrijkt is.
+  static (String column, bool lowerIsBetter)? _goalAxis(SwapGoal? goal) =>
+      switch (goal) {
+        SwapGoal.minderKcal => ('kcal_100g', true),
+        SwapGoal.minderSuiker => ('sugar_100g', true),
+        SwapGoal.meerEiwit => ('protein_100g', false),
+        SwapGoal.besteOverall || null => null,
+      };
+
+  /// Haalt ook de sterkste kandidaten op de gekozen doelas op. Daardoor
+  /// verdwijnt een goede swap niet omdat hij buiten de kwaliteitstop valt.
+  Future<List<SwapCandidate>> _goalDirectedCandidates({
+    required String excludeBarcode,
+    required String swapFamily,
+    required SwapGoal goal,
+    required double sourceValue,
+    int limit = 20,
+  }) async {
+    final axis = _goalAxis(goal);
+    if (axis == null) return const [];
+    final (column, lowerIsBetter) = axis;
+    var query = _supabase.client
+        .from(_resolvedProductView)
+        .select(_resolvedProductColumns)
+        .eq('swap_family', swapFamily)
+        .eq('classification_status', 'classified')
+        .eq('is_swap_relevant', true)
+        .neq('barcode', excludeBarcode);
+    query = lowerIsBetter
+        ? query.lt(column, sourceValue)
+        : query.gt(column, sourceValue);
+    final rows = await query
+        .order(column, ascending: lowerIsBetter)
+        .order('barcode')
+        .limit(limit);
+    return (rows as List)
+        .map((row) => SwapCandidate.fromJoinedJson(
+              (row as Map).cast<String, dynamic>(),
+            ))
+        .where(_isEligibleCandidate)
+        .toList();
+  }
+
   Future<List<SwapCandidate>> getCandidatesForCluster({
     required String excludeBarcode,
     String? swapFamily,
     String? snackType,
     String? categoryCluster,
     String? fallbackCategory,
+    SwapGoal? goal,
+    double? goalSourceValue,
     int limit = 120,
   }) async {
     if (!_supabase.isAvailable) return const [];
@@ -205,12 +250,25 @@ is_less_processed,has_sweeteners,has_palm_oil,ingredient_count
             .eq('is_swap_relevant', true)
             .neq('barcode', excludeBarcode)
             .order('data_quality_score', ascending: false)
+            .order('barcode')
             .limit(limit);
         final candidates = (rows as List)
             .map((r) => SwapCandidate.fromJoinedJson(
                 (r as Map).cast<String, dynamic>()))
             .where(_isEligibleCandidate)
             .toList();
+        if (goal != null && goalSourceValue != null) {
+          final directed = await _goalDirectedCandidates(
+            excludeBarcode: excludeBarcode,
+            swapFamily: swapFamily,
+            goal: goal,
+            sourceValue: goalSourceValue,
+          );
+          final seen = candidates.map((candidate) => candidate.barcode).toSet();
+          for (final candidate in directed) {
+            if (seen.add(candidate.barcode)) candidates.add(candidate);
+          }
+        }
         // Een bekende familie is de hardste semantische grens. Ook bij maar
         // één goede kandidaat nooit verbreden naar een algemene categorie.
         return candidates;
@@ -224,6 +282,7 @@ is_less_processed,has_sweeteners,has_palm_oil,ingredient_count
             .eq('is_swap_relevant', true)
             .neq('barcode', excludeBarcode)
             .order('data_quality_score', ascending: false)
+            .order('barcode')
             .limit(limit);
         final candidates = (rows as List)
             .map((r) => SwapCandidate.fromJoinedJson(
@@ -241,6 +300,7 @@ is_less_processed,has_sweeteners,has_palm_oil,ingredient_count
             .eq('is_swap_relevant', true)
             .neq('barcode', excludeBarcode)
             .order('data_quality_score', ascending: false)
+            .order('barcode')
             .limit(limit);
         final candidates = (rows as List)
             .map((r) => SwapCandidate.fromJoinedJson(
@@ -258,6 +318,7 @@ is_less_processed,has_sweeteners,has_palm_oil,ingredient_count
             .neq('barcode', excludeBarcode)
             .ilike('category', '%$fallbackCategory%')
             .order('data_quality_score', ascending: false)
+            .order('barcode')
             .limit(limit);
         return (rows as List)
             .map((r) => SwapCandidate.fromJoinedJson(
