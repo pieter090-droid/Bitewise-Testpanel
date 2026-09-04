@@ -1,9 +1,13 @@
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import 'package:bitewise/core/config/feature_flags.dart';
 import 'package:bitewise/features/snackswap/application/swap_score_calculator.dart';
 import 'package:bitewise/features/snackswap/data/snackswap_service.dart';
 import 'package:bitewise/features/snackswap/domain/product_features.dart';
 import 'package:bitewise/features/snackswap/domain/swap_score_result.dart';
+import 'package:bitewise/features/snackswap_v3/application/swap_calculator_v3.dart';
+import 'package:bitewise/features/snackswap_v3/data/offline_swap_candidate_repository_v3.dart';
+import 'package:bitewise/features/snackswap_v3/domain/swap_models_v3.dart';
 import 'package:bitewise/features/tracker/application/tracker_providers.dart';
 import 'package:bitewise/features/tracker/domain/day_log.dart';
 
@@ -181,6 +185,10 @@ final ruleBasedSwapProvider = FutureProvider.family<
       SwapGoal goal,
       bool useDayContext
     })>((ref, request) async {
+  if (FeatureFlags.swapEngineV3Enabled) {
+    return _loadOfflineV3Outcome(ref, request);
+  }
+
   final service = ref.watch(snackSwapServiceProvider);
   final barcode = request.barcode;
 
@@ -274,3 +282,135 @@ final ruleBasedSwapProvider = FutureProvider.family<
 
   return RuleBasedSwapFound(groups, allRanked, source, configs);
 });
+
+Future<RuleBasedSwapOutcome> _loadOfflineV3Outcome(
+  Ref ref,
+  ({String barcode, SwapGoal goal, bool useDayContext}) request,
+) async {
+  try {
+    final repository = ref.read(offlineSwapCandidateRepositoryV3Provider);
+    final role = await repository.primaryUsageRoleFor(request.barcode);
+    if (role == null) return const RuleBasedSwapNotFound();
+
+    final goal = _goalV3(request.goal);
+    final input = await repository.loadInput(
+      sourceBarcode: request.barcode,
+      usageRoleCode: role,
+      goal: goal,
+    );
+    if (input == null) return const RuleBasedSwapNotFound();
+
+    final result = const SwapCalculatorV3().calculate(input);
+    if (result.error != null) return RuleBasedSwapError(result.error!);
+
+    List<SwapScoreResult> convert(List<SwapRecommendationV3> values) =>
+        values.map(_legacyResultFromV3).toList(growable: false);
+
+    final direct = convert(result.directSwaps);
+    final compatible = convert(result.compatibleAlternatives);
+    final smart = convert(result.smartAlternatives);
+    if (direct.isEmpty && compatible.isEmpty && smart.isEmpty) {
+      return const RuleBasedSwapNotFound();
+    }
+
+    final groups = <SwapRecommendationGroup>[
+      if (direct.isNotEmpty)
+        SwapRecommendationGroup(
+          slug: 'directe_swaps_v3',
+          label: 'Directe swaps',
+          results: direct,
+        ),
+      if (compatible.isNotEmpty)
+        SwapRecommendationGroup(
+          slug: 'alternatieven_v3',
+          label: 'Passende alternatieven',
+          results: compatible,
+        ),
+      if (smart.isNotEmpty)
+        SwapRecommendationGroup(
+          slug: 'slimme_alternatieven_v3',
+          label: 'Slimme alternatieven',
+          results: smart,
+        ),
+    ];
+    final seen = <String>{};
+    final allRanked = [...direct, ...compatible, ...smart]
+        .where((item) => seen.add(item.candidate.barcode))
+        .toList()
+      ..sort((a, b) => b.score.compareTo(a.score));
+    final configs = [
+      {'slug': request.goal.value, 'label': request.goal.label},
+    ];
+    return RuleBasedSwapFound(
+      groups,
+      allRanked,
+      _legacyProductFromV3(input.source),
+      configs,
+    );
+  } catch (error) {
+    return RuleBasedSwapError('v3_test_data_error:$error');
+  }
+}
+
+SwapGoalV3 _goalV3(SwapGoal goal) => switch (goal) {
+      SwapGoal.meerEiwit => SwapGoalV3.moreProtein,
+      SwapGoal.minderKcal => SwapGoalV3.lessCalories,
+      SwapGoal.minderSuiker => SwapGoalV3.lessSugar,
+      SwapGoal.besteOverall => SwapGoalV3.bestOverall,
+    };
+
+SwapScoreResult _legacyResultFromV3(SwapRecommendationV3 result) =>
+    SwapScoreResult(
+      candidate: _legacyProductFromV3(result.product),
+      score: result.score.finalScore,
+      goalMatch: result.score.goalImprovement,
+      nutritionImprovement: result.score.nutritionBalance,
+      dayContext: 0,
+      similarity: result.score.practicalMatch,
+      processingQuality: result.score.comparisonQuality,
+      dataQuality: result.score.dataQuality,
+      reasons: result.explanation,
+      reasonCodes: [
+        switch (result.comparisonBasis) {
+          ComparisonBasisTypeV3.comparablePortion => 'per portie',
+          ComparisonBasisTypeV3.comparableUnit => 'per stuk',
+          ComparisonBasisTypeV3.per100g => 'per 100 g',
+          ComparisonBasisTypeV3.per100ml => 'per 100 ml',
+          ComparisonBasisTypeV3.incomparable => 'niet vergelijkbaar',
+        },
+      ],
+    );
+
+SwapCandidate _legacyProductFromV3(SwapProductV3 product) => SwapCandidate(
+      barcode: product.barcode,
+      name: product.name,
+      brand: product.brand,
+      kcal100: product.nutrition.energyKcal,
+      sugar100: product.nutrition.sugars,
+      protein100: product.nutrition.protein,
+      fat100: product.nutrition.fat,
+      carbs100: product.nutrition.carbohydrates,
+      fiber100: product.nutrition.fiber,
+      salt100: product.nutrition.salt,
+      saturatedFat100: product.nutrition.saturatedFat,
+      completeness: product.dataCompleteness,
+      features: ProductFeatures(
+        barcode: product.barcode,
+        classificationStatus: product.classificationStatus,
+        categoryCluster: _runtimeGroupPart(product.directSwapGroupCode, 0),
+        snackType: _runtimeGroupPart(product.directSwapGroupCode, 2),
+        swapFamily: product.directSwapGroupCode,
+        productForm: product.productFormCode,
+        consumptionMode: product.preparationStatusCode,
+        usageContext: product.usageRoleCodes.toList(growable: false),
+        isDrink: product.nutritionDimension == NutritionDimensionV3.volume,
+        dataQualityScore: product.dataCompleteness * 100,
+        aiConfidence: product.classificationConfidence,
+        isSwapRelevant: product.swapEligible,
+      ),
+    );
+
+String? _runtimeGroupPart(String? group, int index) {
+  final parts = group?.split('::');
+  return parts != null && parts.length > index ? parts[index] : null;
+}

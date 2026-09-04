@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import 'package:bitewise/core/branding/brand_marks.dart';
+import 'package:bitewise/core/config/feature_flags.dart';
 import 'package:bitewise/core/preferences/preferences_service.dart';
 import 'package:bitewise/core/theme/app_colors.dart';
 import 'package:bitewise/features/snackswap/application/rule_based_swap_provider.dart';
@@ -176,12 +177,15 @@ class _SwapScreenState extends ConsumerState<SwapScreen> {
                     ),
                   ),
                   data: (result) => switch (result) {
-                    RuleBasedSwapNotFound() => const _Info(
+                    RuleBasedSwapNotFound() => _Info(
                         icon: Icons.inbox_outlined,
                         title: 'Geen swaps gevonden',
-                        body:
-                            'Voor dit product hebben we nog geen alternatief -- '
-                            'mogelijk is het nog niet verrijkt of niet swap-relevant.',
+                        body: FeatureFlags.swapEngineV3Enabled
+                            ? 'Dit product staat nog niet betrouwbaar genoeg in '
+                                'de tijdelijke v3-testdataset, of er is voor dit '
+                                'doel geen kandidaat die alle controles haalt.'
+                            : 'Voor dit product hebben we nog geen alternatief -- '
+                                'mogelijk is het nog niet verrijkt of niet swap-relevant.',
                       ),
                     RuleBasedSwapError() => const _Info(
                         icon: Icons.cloud_off,
@@ -247,10 +251,13 @@ class _SwapScreenState extends ConsumerState<SwapScreen> {
             label: const Text('Ander doel kiezen'),
           ),
         ),
-        _DayContextToggle(
-          value: _useDayContext,
-          onChanged: _setUseDayContext,
-        ),
+        if (FeatureFlags.swapEngineV3Enabled)
+          const _V3TestBanner()
+        else
+          _DayContextToggle(
+            value: _useDayContext,
+            onChanged: _setUseDayContext,
+          ),
         const SizedBox(height: 12),
         for (final group in groups)
           _GroupSection(
@@ -333,10 +340,13 @@ class _GoalChooser extends StatelessWidget {
         const Text('Kies wat je met deze swap wilt verbeteren.',
             style: TextStyle(color: AppColors.slate)),
         const SizedBox(height: 24),
-        _DayContextToggle(
-          value: useDayContext,
-          onChanged: onUseDayContextChanged,
-        ),
+        if (FeatureFlags.swapEngineV3Enabled)
+          const _V3TestBanner()
+        else
+          _DayContextToggle(
+            value: useDayContext,
+            onChanged: onUseDayContextChanged,
+          ),
         const SizedBox(height: 20),
         for (final goal in SwapGoal.values)
           Padding(
@@ -353,6 +363,47 @@ class _GoalChooser extends StatelessWidget {
       ],
     );
   }
+}
+
+class _V3TestBanner extends StatelessWidget {
+  const _V3TestBanner();
+
+  @override
+  Widget build(BuildContext context) => Container(
+        padding: const EdgeInsets.all(14),
+        decoration: BoxDecoration(
+          color: AppColors.white,
+          borderRadius: BorderRadius.circular(18),
+          border: Border.all(color: AppColors.mist),
+        ),
+        child: const Row(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Icon(Icons.science_outlined, color: AppColors.navy),
+            SizedBox(width: 10),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    'V3 testmodus',
+                    style: TextStyle(
+                      fontWeight: FontWeight.w800,
+                      color: AppColors.navy,
+                    ),
+                  ),
+                  SizedBox(height: 2),
+                  Text(
+                    'Tijdelijke offline data. Directe swaps volgen de nieuwe '
+                    'taxonomie; resultaten worden niet met de huidige engine gemengd.',
+                    style: TextStyle(color: AppColors.slate, fontSize: 12),
+                  ),
+                ],
+              ),
+            ),
+          ],
+        ),
+      );
 }
 
 class _DayContextToggle extends StatelessWidget {
