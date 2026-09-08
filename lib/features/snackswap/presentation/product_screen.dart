@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 
+import 'package:bitewise/core/config/feature_flags.dart';
 import 'package:bitewise/core/router/app_router.dart';
 import 'package:bitewise/core/theme/app_colors.dart';
 import 'package:bitewise/features/favorites/data/favorites_repository.dart';
@@ -41,7 +42,8 @@ class ProductScreen extends ConsumerWidget {
           LookupFound(:final product) => _ProductBody(product: product),
           LookupNotFound() => const _Message(
               icon: Icons.search_off,
-              text: 'Geen product gevonden voor deze barcode.'),
+              text: 'Deze barcode staat nog niet in onze productbronnen.\n'
+                  'Zoek het product op naam of meld het via Feedback.'),
           LookupError(:final message) =>
             _Message(icon: Icons.cloud_off, text: message),
         },
@@ -75,7 +77,10 @@ class _ProductBodyState extends ConsumerState<_ProductBody> {
     }
   }
 
-  double _scale(double? per100) => (per100 ?? 0) * _grams / 100;
+  double? _scale(double? per100) =>
+      per100 == null ? null : per100 * _grams / 100;
+
+  double _scaleOrZero(double? per100) => _scale(per100) ?? 0;
 
   Future<void> _log() async {
     await ref.read(dayLogsRepositoryProvider).logEntry(
@@ -83,11 +88,11 @@ class _ProductBodyState extends ConsumerState<_ProductBody> {
           productName: widget.product.name,
           mealType: _meal,
           grams: _grams,
-          kcal: _scale(widget.product.kcal100),
-          protein: _scale(widget.product.protein100),
-          sugar: _scale(widget.product.sugar100),
-          carbs: _scale(widget.product.carbs100),
-          fat: _scale(widget.product.fat100),
+          kcal: _scaleOrZero(widget.product.kcal100),
+          protein: _scaleOrZero(widget.product.protein100),
+          sugar: _scaleOrZero(widget.product.sugar100),
+          carbs: _scaleOrZero(widget.product.carbs100),
+          fat: _scaleOrZero(widget.product.fat100),
         );
     ref.read(syncCoordinatorProvider).onLogsChanged();
     if (!mounted) return;
@@ -102,6 +107,9 @@ class _ProductBodyState extends ConsumerState<_ProductBody> {
   Widget build(BuildContext context) {
     final p = widget.product;
     final isFav = ref.watch(isFavoriteProvider(p.barcode)).valueOrNull ?? false;
+    final canSwap = FeatureFlags.swapEngineV3Enabled
+        ? p.source == 'offline_v3' && p.isSwapReady
+        : p.isSwapReady;
 
     return Column(
       children: [
@@ -129,6 +137,17 @@ class _ProductBodyState extends ConsumerState<_ProductBody> {
                         if (p.brand != null && p.brand!.isNotEmpty)
                           Text(p.brand!,
                               style: const TextStyle(color: AppColors.slate)),
+                        const SizedBox(height: 6),
+                        Text(
+                          p.source == 'offline_v3'
+                              ? 'Gecontroleerd met Bitewise v3-data'
+                              : 'Product gevonden via online bron',
+                          style: const TextStyle(
+                            color: AppColors.slate,
+                            fontSize: 12,
+                            fontWeight: FontWeight.w600,
+                          ),
+                        ),
                       ],
                     ),
                   ),
@@ -156,7 +175,30 @@ class _ProductBodyState extends ConsumerState<_ProductBody> {
                 protein: _scale(p.protein100),
                 fat: _scale(p.fat100),
                 carbs: _scale(p.carbs100),
+                fiber: _scale(p.fiber100),
+                salt: _scale(p.salt100),
               ),
+              if (!canSwap) ...[
+                const SizedBox(height: 16),
+                const _Card(
+                  child: Row(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Icon(Icons.verified_user_outlined, color: AppColors.gold),
+                      SizedBox(width: 12),
+                      Expanded(
+                        child: Text(
+                          'We herkennen dit product, maar hebben nog geen '
+                          'betrouwbare v3-classificatie voor een goede swap. '
+                          'Daarom tonen we bewust geen willekeurig alternatief.',
+                          style:
+                              TextStyle(color: AppColors.slate, height: 1.35),
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ],
             ],
           ),
         ),
@@ -172,9 +214,11 @@ class _ProductBodyState extends ConsumerState<_ProductBody> {
               ),
               const SizedBox(height: 10),
               FilledButton.icon(
-                onPressed: () => context.push(Routes.swap(p.barcode)),
+                onPressed:
+                    canSwap ? () => context.push(Routes.swap(p.barcode)) : null,
                 icon: const Icon(Icons.swap_horiz),
-                label: const Text('Vind betere swap'),
+                label: Text(
+                    canSwap ? 'Vind betere swap' : 'Nog geen betrouwbare swap'),
               ),
             ],
           ),
@@ -264,19 +308,27 @@ class _NutritionCard extends StatelessWidget {
     required this.protein,
     required this.fat,
     required this.carbs,
+    required this.fiber,
+    required this.salt,
   });
 
   final double grams;
-  final double kcal;
-  final double sugar;
-  final double protein;
-  final double fat;
-  final double carbs;
+  final double? kcal;
+  final double? sugar;
+  final double? protein;
+  final double? fat;
+  final double? carbs;
+  final double? fiber;
+  final double? salt;
 
   @override
   Widget build(BuildContext context) {
     String f(double v) =>
         v == v.roundToDouble() ? v.toStringAsFixed(0) : v.toStringAsFixed(1);
+    String value(double? v, String unit) => v == null ? '–' : '${f(v)} $unit';
+    final known = [kcal, protein, sugar, fat, carbs, fiber, salt]
+        .where((item) => item != null)
+        .length;
     return _Card(
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
@@ -285,11 +337,22 @@ class _NutritionCard extends StatelessWidget {
               style: const TextStyle(
                   fontWeight: FontWeight.w700, color: AppColors.navy)),
           const SizedBox(height: 8),
-          _row('Energie', '${f(kcal)} kcal', bold: true),
-          _row('Eiwit', '${f(protein)} g'),
-          _row('Suiker', '${f(sugar)} g'),
-          _row('Vet', '${f(fat)} g'),
-          _row('Koolhydraten', '${f(carbs)} g'),
+          _row('Energie', value(kcal, 'kcal'), bold: true),
+          _row('Eiwit', value(protein, 'g')),
+          _row('Suiker', value(sugar, 'g')),
+          _row('Vet', value(fat, 'g')),
+          _row('Koolhydraten', value(carbs, 'g')),
+          _row('Vezels', value(fiber, 'g')),
+          _row('Zout', value(salt, 'g')),
+          if (known < 3) ...[
+            const SizedBox(height: 8),
+            const Text(
+              'De bron bevat voor dit product maar beperkte '
+              'voedingsinformatie. Ontbrekende waarden worden niet als nul '
+              'meegerekend.',
+              style: TextStyle(color: AppColors.slate, fontSize: 12),
+            ),
+          ],
         ],
       ),
     );

@@ -103,7 +103,7 @@ class SettingsScreen extends ConsumerWidget {
           ),
           const SizedBox(height: 24),
           const Center(
-            child: Text('Bitewise Testpanel · v0.3.0-beta.1',
+            child: Text('Bitewise Pitchbeta · v0.3.0-beta.2',
                 style: TextStyle(color: AppColors.slate)),
           ),
         ],

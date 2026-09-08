@@ -15,6 +15,34 @@ void main() {
       expect(await repository.primaryUsageRoleFor('bestaat-niet'), isNull);
     });
 
+    test('levert een offline scanresultaat met voedingswaarden', () async {
+      final product = await repository.lookupProduct('00006550');
+
+      expect(product, isNotNull);
+      expect(product!.name, 'Amandelpasta');
+      expect(product.source, 'offline_v3');
+      expect(product.kcal100, 595);
+      expect(product.protein100, 21.2);
+      expect(product.isSwapReady, isTrue);
+    });
+
+    test('herkent dezelfde EAN in een GTIN-14 met voorloopnul', () async {
+      final product = await repository.lookupProduct('08718452804955');
+      expect(product?.barcode, '8718452804955');
+    });
+
+    test('zoekt bekende producten offline op naam en merk', () async {
+      final products = await repository.searchProducts('Jumbo pindakaas');
+
+      expect(products, isNotEmpty);
+      expect(
+        products.every((product) =>
+            product.name.toLowerCase().contains('pindakaas') &&
+            product.brand?.toLowerCase().contains('jumbo') == true),
+        isTrue,
+      );
+    });
+
     test('bouwt directe kandidaten uitsluitend uit dezelfde v3-identiteit',
         () async {
       final input = await repository.loadInput(

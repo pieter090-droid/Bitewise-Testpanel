@@ -3,11 +3,12 @@ import 'dart:convert';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import 'package:bitewise/features/snackswap/domain/snack_product.dart';
 import 'package:bitewise/features/snackswap_v3/data/swap_candidate_repository_v3.dart';
 import 'package:bitewise/features/snackswap_v3/domain/swap_models_v3.dart';
 
 final offlineSwapCandidateRepositoryV3Provider =
-    Provider<SwapCandidateRepositoryV3>(
+    Provider<OfflineSwapCandidateRepositoryV3>(
   (_) => OfflineSwapCandidateRepositoryV3(),
 );
 
@@ -22,6 +23,43 @@ class OfflineSwapCandidateRepositoryV3 implements SwapCandidateRepositoryV3 {
   Future<_OfflineDatasetV3>? _datasetFuture;
 
   Future<_OfflineDatasetV3> _dataset() => _datasetFuture ??= _loadDataset();
+
+  /// Vindt het volledige bronproduct in dezelfde offline dataset die de
+  /// v3-swapengine gebruikt. Hierdoor hoeven scanresultaten die al lokaal
+  /// bekend zijn niet opnieuw (en mogelijk onvolledig) online opgehaald te
+  /// worden.
+  Future<SnackProduct?> lookupProduct(String barcode) async {
+    final dataset = await _dataset();
+    final record = dataset.findByBarcode(barcode);
+    if (record == null) return null;
+    return record.toSnackProduct();
+  }
+
+  /// Snelle lokale zoekfallback voor de pitch. Alleen naam en merk bepalen
+  /// hier welke records worden opgehaald; de bestaande ProductSearchRanker
+  /// verzorgt daarna in de service de definitieve volgorde.
+  Future<List<SnackProduct>> searchProducts(
+    String query, {
+    int limit = 120,
+  }) async {
+    final terms = query
+        .trim()
+        .toLowerCase()
+        .split(RegExp(r'\s+'))
+        .where((term) => term.isNotEmpty)
+        .toList(growable: false);
+    if (terms.isEmpty) return const [];
+
+    final dataset = await _dataset();
+    return dataset.products
+        .where((record) {
+          final haystack = '${record.name} ${record.brand ?? ''}'.toLowerCase();
+          return terms.every(haystack.contains);
+        })
+        .take(limit)
+        .map((record) => record.toSnackProduct())
+        .toList(growable: false);
+  }
 
   Future<_OfflineDatasetV3> _loadDataset() async {
     final json = jsonDecode(await _bundle.loadString(_assetPath))
@@ -139,6 +177,7 @@ class OfflineSwapCandidateRepositoryV3 implements SwapCandidateRepositoryV3 {
 
 class _OfflineDatasetV3 {
   const _OfflineDatasetV3({
+    required this.products,
     required this.byBarcode,
     required this.byRuntimeIdentity,
     required this.byBaseIdentity,
@@ -150,6 +189,7 @@ class _OfflineDatasetV3 {
     required this.policyVersion,
   });
 
+  final List<_OfflineProductRecordV3> products;
   final Map<String, _OfflineProductRecordV3> byBarcode;
   final Map<String, List<_OfflineProductRecordV3>> byRuntimeIdentity;
   final Map<String, List<_OfflineProductRecordV3>> byBaseIdentity;
@@ -159,6 +199,21 @@ class _OfflineDatasetV3 {
   final List<AttributeCompatibilityRuleV3> attributeRules;
   final Map<String, dynamic> defaultProfile;
   final String policyVersion;
+
+  _OfflineProductRecordV3? findByBarcode(String input) {
+    final digits = input.replaceAll(RegExp(r'\D'), '');
+    if (digits.isEmpty) return null;
+    final exact = byBarcode[digits];
+    if (exact != null) return exact;
+
+    // GTIN-14 gebruikt voor een consumenten-EAN soms één voorloopnul.
+    // Accepteer alleen deze verliesloze, gangbare representatievariant.
+    if (digits.length == 14 && digits.startsWith('0')) {
+      return byBarcode[digits.substring(1)];
+    }
+    if (digits.length == 13) return byBarcode['0$digits'];
+    return null;
+  }
 
   factory _OfflineDatasetV3.fromJson(Map<String, dynamic> json) {
     final products = (json['products'] as List)
@@ -188,6 +243,7 @@ class _OfflineDatasetV3 {
     }
 
     return _OfflineDatasetV3(
+      products: products,
       byBarcode: byBarcode,
       byRuntimeIdentity: byIdentity,
       byBaseIdentity: byBaseIdentity,
@@ -332,6 +388,25 @@ class _OfflineProductRecordV3 {
         portionContext: portion,
         nutritionDimension: _nutritionDimension(mainCategory, form, roles),
         dataCompleteness: completeness,
+      );
+
+  SnackProduct toSnackProduct() => SnackProduct(
+        barcode: barcode,
+        name: name,
+        brand: brand,
+        source: 'offline_v3',
+        kcal100: nutrition.energyKcal,
+        sugar100: nutrition.sugars,
+        protein100: nutrition.protein,
+        fat100: nutrition.fat,
+        carbs100: nutrition.carbohydrates,
+        fiber100: nutrition.fiber,
+        salt100: nutrition.salt,
+        saturatedFat100: nutrition.saturatedFat,
+        categoriesTags: '$mainCategory,$productCategory,$subcategory',
+        classificationStatus: 'classified',
+        isSwapRelevant: true,
+        swapFamily: runtimeGroup(primaryRole),
       );
 }
 

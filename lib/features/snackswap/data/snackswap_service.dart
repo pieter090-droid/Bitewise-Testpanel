@@ -6,6 +6,7 @@ import 'package:bitewise/features/snackswap/application/product_search_ranker.da
 import 'package:bitewise/features/snackswap/domain/product_features.dart';
 import 'package:bitewise/features/snackswap/domain/snack_product.dart';
 import 'package:bitewise/features/snackswap/domain/swap_score_result.dart';
+import 'package:bitewise/features/snackswap_v3/data/offline_swap_candidate_repository_v3.dart';
 
 // --- Resultaattypes met duidelijke, aparte statussen ---
 
@@ -30,14 +31,19 @@ class LookupError extends LookupOutcome {
   final String message;
 }
 
-/// Praat UITSLUITEND met de Supabase Edge Functions.
+/// Leest bekende v3-producten eerst uit de meegebouwde offline catalogus.
 ///
+/// - Onbekende barcodes vallen terug op de Supabase Edge Function.
 /// - Roept nooit Open Food Facts direct aan (dat doet de Edge Function).
 /// - Gebruikt alleen de publishable (anon) key; nooit een service_role key.
 class SnackSwapService {
-  SnackSwapService(this._supabase);
+  SnackSwapService(
+    this._supabase, {
+    OfflineSwapCandidateRepositoryV3? offlineCatalog,
+  }) : _offlineCatalog = offlineCatalog;
 
   final SupabaseService _supabase;
+  final OfflineSwapCandidateRepositoryV3? _offlineCatalog;
   static const _resolvedProductView = 'product_features_resolved';
   static const _resolvedProductColumns = '''
 barcode,name,brand,image_url,category,
@@ -58,7 +64,19 @@ is_less_processed,has_sweeteners,has_palm_oil,ingredient_count
   }
 
   Future<LookupOutcome> lookupProduct(String barcode) async {
-    final trimmed = barcode.trim();
+    final trimmed = barcode.replaceAll(RegExp(r'\D'), '');
+
+    // De meegebouwde v3-set is de primaire bron voor de pitch-bèta. Dit is
+    // dezelfde data die de swapengine gebruikt, dus productdetail en swap
+    // kunnen niet meer door twee verschillende lookups uit elkaar lopen.
+    try {
+      final offline = await _offlineCatalog?.lookupProduct(trimmed);
+      if (offline != null) return LookupFound(offline);
+    } catch (_) {
+      // Een beschadigde lokale asset mag de bestaande online fallback niet
+      // blokkeren. De v3-swaproute rapporteert zo'n assetfout afzonderlijk.
+    }
+
     if (!_supabase.isAvailable) {
       return const LookupError(
         'Geen backend geconfigureerd. Vul je Supabase-key in assets/env/env.json.',
@@ -98,7 +116,19 @@ is_less_processed,has_sweeteners,has_palm_oil,ingredient_count
   /// relevantie. De database wordt hierbij niet gewijzigd.
   Future<List<SnackProduct>> searchProducts(String query) async {
     final q = query.trim();
-    if (!_supabase.isAvailable || q.length < 2) return const [];
+    if (q.length < 2) return const [];
+
+    // Bekende pitchproducten blijven ook bij een trage of ontbrekende
+    // internetverbinding direct vindbaar. De ranker zet exacte productnamen
+    // en producttypes boven toevallige deelmatches.
+    try {
+      final offline = await _offlineCatalog?.searchProducts(q) ?? const [];
+      if (offline.isNotEmpty) return ProductSearchRanker.rank(q, offline);
+    } catch (_) {
+      // Vang terug op de bestaande online zoeklaag.
+    }
+
+    if (!_supabase.isAvailable) return const [];
     try {
       const columns = 'barcode,name,brand,image_url,categories_tags,'
           'kcal_100g,sugar_100g,protein_100g,fat_100g,carbs_100g,'
@@ -406,5 +436,8 @@ is_less_processed,has_sweeteners,has_palm_oil,ingredient_count
 }
 
 final snackSwapServiceProvider = Provider<SnackSwapService>(
-  (ref) => SnackSwapService(ref.watch(supabaseServiceProvider)),
+  (ref) => SnackSwapService(
+    ref.watch(supabaseServiceProvider),
+    offlineCatalog: ref.watch(offlineSwapCandidateRepositoryV3Provider),
+  ),
 );

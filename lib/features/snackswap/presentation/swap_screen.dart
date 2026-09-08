@@ -182,7 +182,7 @@ class _SwapScreenState extends ConsumerState<SwapScreen> {
                         title: 'Geen swaps gevonden',
                         body: FeatureFlags.swapEngineV3Enabled
                             ? 'Dit product staat nog niet betrouwbaar genoeg in '
-                                'de tijdelijke v3-testdataset, of er is voor dit '
+                                'de offline v3-dataset, of er is voor dit '
                                 'doel geen kandidaat die alle controles haalt.'
                             : 'Voor dit product hebben we nog geen alternatief -- '
                                 'mogelijk is het nog niet verrijkt of niet swap-relevant.',
@@ -386,7 +386,7 @@ class _V3TestBanner extends StatelessWidget {
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
                   Text(
-                    'V3 testmodus',
+                    'Pitchbèta · offline v3',
                     style: TextStyle(
                       fontWeight: FontWeight.w800,
                       color: AppColors.navy,
@@ -394,8 +394,9 @@ class _V3TestBanner extends StatelessWidget {
                   ),
                   SizedBox(height: 2),
                   Text(
-                    'Tijdelijke offline data. Directe swaps volgen de nieuwe '
-                    'taxonomie; resultaten worden niet met de huidige engine gemengd.',
+                    'Bekende producten en swaps komen uit dezelfde v3-dataset. '
+                    'Directe swaps volgen de nieuwe taxonomie en worden niet '
+                    'met de oude engine gemengd.',
                     style: TextStyle(color: AppColors.slate, fontSize: 12),
                   ),
                 ],
